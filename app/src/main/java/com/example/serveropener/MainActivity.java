@@ -5,6 +5,7 @@ import android.content.Intent;
 import android.os.Build;
 import android.os.Bundle;
 import android.util.Log;
+import android.widget.Button;
 
 import androidx.activity.EdgeToEdge;
 import androidx.annotation.NonNull;
@@ -25,15 +26,10 @@ import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
-import java.text.SimpleDateFormat;
-import java.util.Calendar;
-import java.util.Date;
 
-import datamodel.BasicFee;
 import datamodel.BasicSetting;
 import event.Var;
 import util.ApacheServerRequest;
-import util.HTTPGetRequest;
 
 public class MainActivity extends AppCompatActivity {
 
@@ -56,6 +52,16 @@ public class MainActivity extends AppCompatActivity {
         } catch (Exception e) {
             e.printStackTrace();
         }
+        Button btnImport = findViewById(R.id.import_button);
+        Button btnExport = findViewById(R.id.export_button);
+        btnImport.setOnClickListener(v -> {
+//            executeCommand("cd", new String[]{"/storage/sd-ext/"});
+            executeCommand("mysql", new String[]{"-e", "DROP DATABASE parking_lots;CREATE DATABASE parking_lots;"});
+            executeCommand("/storage/sd-ext","mysql", new String[]{"-e", "use parking_lots;source parking_lots.sql;"});
+        });
+        btnExport.setOnClickListener(v -> {
+            executeCommand("mysqldump", new String[]{"parking_lots", "--result-file=/storage/sd-ext/parking_lots.sql"});
+        });
     }
 
     private void executeCommand(String command, String[] ags) {
@@ -101,7 +107,49 @@ public class MainActivity extends AppCompatActivity {
             Log.e(LOG_TAG, "Failed to start execution command with id " + executionId + ": " + e.getMessage());
         }
     }
+    private void executeCommand(String dir, String command, String[] ags) {
+        String LOG_TAG = "command";
+        Intent intent = new Intent();
+        intent.setClassName(TermuxConstants.TERMUX_PACKAGE_NAME, TermuxConstants.TERMUX_APP.RUN_COMMAND_SERVICE_NAME);
+        intent.setAction(TermuxConstants.TERMUX_APP.RUN_COMMAND_SERVICE.ACTION_RUN_COMMAND);
+        intent.putExtra(TermuxConstants.TERMUX_APP.RUN_COMMAND_SERVICE.EXTRA_COMMAND_PATH, "/data/data/com.termux/files/usr/bin/" + command);
+        intent.putExtra(TermuxConstants.TERMUX_APP.RUN_COMMAND_SERVICE.EXTRA_ARGUMENTS, ags);
+        intent.putExtra(TermuxConstants.TERMUX_APP.RUN_COMMAND_SERVICE.EXTRA_WORKDIR, dir);
+        intent.putExtra(TermuxConstants.TERMUX_APP.RUN_COMMAND_SERVICE.EXTRA_BACKGROUND, true);
+        intent.putExtra(TermuxConstants.TERMUX_APP.RUN_COMMAND_SERVICE.EXTRA_SESSION_ACTION, "0");
+        intent.putExtra(TermuxConstants.TERMUX_APP.RUN_COMMAND_SERVICE.EXTRA_COMMAND_LABEL, "top command");
+        intent.putExtra(TermuxConstants.TERMUX_APP.RUN_COMMAND_SERVICE.EXTRA_COMMAND_DESCRIPTION, "Runs the top command to show processes using the most resources.");
 
+// Create the intent for the IntentService class that should be sent the result by TermuxService
+        Intent pluginResultsServiceIntent = new Intent(MainActivity.this, PluginResultsService.class);
+
+// Generate a unique execution id for this execution command
+        int executionId = PluginResultsService.getNextExecutionId();
+
+// Optional put an extra that uniquely identifies the command internally for your app.
+// This can be an Intent extra as well with more extras instead of just an int.
+        pluginResultsServiceIntent.putExtra(PluginResultsService.EXTRA_EXECUTION_ID, executionId);
+
+// Create the PendingIntent that will be used by TermuxService to send result of
+// commands back to the IntentService
+// Note that the requestCode (currently executionId) must be unique for each pending
+// intent, even if extras are different, otherwise only the result of only the first
+// execution will be returned since pending intent will be cancelled by android
+// after the first result has been sent back via the pending intent and termux
+// will not be able to send more.
+        PendingIntent pendingIntent = PendingIntent.getService(MainActivity.this, executionId,
+                pluginResultsServiceIntent,
+                PendingIntent.FLAG_ONE_SHOT | (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ? PendingIntent.FLAG_MUTABLE : 0));
+        intent.putExtra(TermuxConstants.TERMUX_APP.RUN_COMMAND_SERVICE.EXTRA_PENDING_INTENT, pendingIntent);
+
+        try {
+            // Send command intent for execution
+            Log.d(LOG_TAG, "Sending execution command with id " + executionId);
+            startService(intent);
+        } catch (Exception e) {
+            Log.e(LOG_TAG, "Failed to start execution command with id " + executionId + ": " + e.getMessage());
+        }
+    }
     private void uploadLots() {
         Thread t = new Thread(() -> {
             try {
